@@ -1,0 +1,47 @@
+# ═══════════════════════════════════════════════
+#  BEE AI PRO — Configuration
+#  Model: YOLOv8m  |  Class: queen (0)
+# ═══════════════════════════════════════════════
+
+model:
+  weights: models/weights/best.pt
+  confidence: 0.75
+  iou: 0.50
+  imgsz: 416
+  device: "cpu"      # CPU for Render
+  half: false
+
+classes:
+  0: queen
+
+camera:
+  source: 0  # Webcam for local testing (Render: client browser camera via /infer)
+  width: 640
+  height: 480
+  fps_target: 10  # Lower for CPU
+  buffer_size: 1
+
+tracking:
+  track_high_thresh: 0.50
+  track_low_thresh: 0.10
+  new_track_thresh: 0.60
+  track_buffer: 30
+  match_thresh: 0.80
+
+alerts:
+  save: true
+  save_dir: alerts/
+  cooldown_seconds: 5
+  jpeg_quality: 92
+  crop_padding: 40
+
+server:
+  host: "0.0.0.0"  # Render bind
+  port_range: [7000, 7099]
+
+visualization:
+  queen_color: [0, 180, 255]
+  bbox_thickness: 2
+  font_scale: 0.6
+  show_confidence: true
+  show_track_id: true

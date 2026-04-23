@@ -1,0 +1,15 @@
+# ═══════════════════════════════════════════════════════
+#  BEE AI PRO — Dataset Config
+#  Matches your Google Colab training notebook exactly
+#  Model: YOLOv8m  |  1 class: queen (class 0)
+#  Dataset: 1350 images from Roboflow
+# ═══════════════════════════════════════════════════════
+
+path: dataset
+train: train/images
+val:   val/images
+
+nc: 1
+
+names:
+  0: queen
