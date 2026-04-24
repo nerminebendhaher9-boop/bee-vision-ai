@@ -9,13 +9,15 @@ services:
     startCommand: gunicorn wsgi:application -k gevent -w 1 --bind 0.0.0.0:$PORT --timeout 120
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.14  # Use fully qualified version
+        value: 3.12.14
       - key: RENDER
         value: "true"
     disk:
       name: alerts
       mountPath: /opt/render/project/src/backend/alerts
       sizeGB: 1
+
+  
   # Frontend Static Site
   - type: static
     name: bee-vision-ai
