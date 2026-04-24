@@ -1,6 +1,6 @@
 flask==3.0.3
 flask-socketio==5.3.6
-flask-cors==4.0.1
+flask-cors==5.0.0
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
 PyYAML==6.0.2
@@ -8,8 +8,9 @@ Pillow==10.4.0
 ultralytics==8.3.40
 supervision==0.24.0
 gunicorn==21.2.0
-gevent>=24.11.1  # Required for WebSocket with gunicorn
-greenlet>=3.1.1
+gevent==24.11.1
+gevent-websocket==0.10.1
+greenlet==3.1.1
 python-engineio==4.9.0
 python-socketio==5.11.0
-eventlet>=0.33.0
+# Remove eventlet - not needed with gevent

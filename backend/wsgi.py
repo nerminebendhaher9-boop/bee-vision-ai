@@ -7,6 +7,10 @@ import sys
 import logging
 from pathlib import Path
 
+# CRITICAL: Monkey patch at the VERY TOP before ANY other imports
+from gevent import monkey
+monkey.patch_all()
+
 # Add paths
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -24,23 +28,16 @@ print("""
 ║       Running on Gunicorn + Gevent                  ║
 ╚══════════════════════════════════════════════════════╝""")
 
-# Monkey patch for gevent BEFORE any other imports (critical!)
-try:
-    from gevent import monkey
-    monkey.patch_all()
-    log.info("✅ Gevent monkey patch applied")
-except ImportError:
-    log.warning("Gevent not available, WebSocket may not work")
+log.info("✅ Gevent monkey patch applied")
 
-# Now import the application
+# Now import the application (after monkey patch)
 from app import app, get_tracker, start_broadcast
 
 # WSGI application
 application = app
 
-# Lazy initialization — do NOT load model at import time on Render
-# The tracker will initialize on first request to /infer or /stats
-# This prevents startup crashes if model weights are missing
-log.info("WSGI application ready")
-log.info("Start command: gunicorn wsgi:application -k gevent -w 1 --bind 0.0.0.0:$PORT")
+# Disable logger string issue by configuring engineio properly
+import engineio
+engineio.logger = log
 
+log.info("WSGI application ready")

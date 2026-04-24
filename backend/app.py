@@ -46,10 +46,9 @@ print("""
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "bee-ai-pro-secret"
 
-# Replace your current CORS configuration with this:
-
 # CORS configuration - Allow local dev + production
-PRODUCTION_ORIGIN = "https://bee-vision-ai.onrender.com"
+PRODUCTION_ORIGIN = "https://bee-vision-ai.onrender.com"  # ← ADD THIS LINE
+
 CORS(app, 
      origins=[
          "http://localhost:5173",
@@ -61,18 +60,28 @@ CORS(app,
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      supports_credentials=True)
 
-# SocketIO configuration - use eventlet for gunicorn compatibility
+# ── SocketIO configuration - FIXED for gevent on Render ──────────────────────
 import os
 _is_render = os.environ.get('RENDER', False)
+
+# Configure SocketIO properly
 socketio = SocketIO(
     app,
-    cors_allowed_origins="*" if _is_render else ["http://localhost:8080", "http://localhost:5173"],
-    async_mode='gevent' if _is_render else 'threading',
-    logger=_is_render,
-    engineio_logger=_is_render,
+    cors_allowed_origins="*" if _is_render else ["http://localhost:5173", "http://localhost:3000"],
+    async_mode='gevent',  # Force gevent mode
+    logger=False,  # Disable to avoid string logger issue
+    engineio_logger=False,  # Disable to avoid string logger issue
     ping_timeout=60,
-    ping_interval=25
+    ping_interval=25,
+    max_http_buffer_size=10**7,
+    http_compression=True
 )
+
+# Manually set the logger after initialization to avoid the AttributeError
+if hasattr(socketio, 'server') and hasattr(socketio.server, 'logger'):
+    socketio.server.logger = log
+if hasattr(socketio, 'eio') and hasattr(socketio.eio, 'logger'):
+    socketio.eio.logger = log
 
 # ── Config ────────────────────────────────────────────────────────────────────
 def load_config() -> Dict[str, Any]:
@@ -128,6 +137,7 @@ def start_broadcast():
     thread = threading.Thread(target=broadcast_loop, daemon=True, name="broadcast")
     thread.start()
     log.info("✅ Broadcast started")
+
 @app.after_request
 def after_request(response):
     origin = request.headers.get('Origin')
@@ -194,49 +204,27 @@ def infer():
         return '', 200
     
     try:
-        # Log incoming request for debugging
         log.info(f"Infer request received")
-        log.info(f"Content-Type: {request.content_type}")
-        log.info(f"Has JSON: {request.is_json}")
         
         data = request.json
         if not data:
             log.error("No JSON data provided")
             return jsonify({'error': 'No JSON data provided'}), 400
         
-        log.info(f"Received keys: {list(data.keys())}")
-        
-        # Get image data - check both possible keys
+        # Get image data
         img_data = data.get('img') or data.get('frame')
         
-        # Log what we found
-        if img_data:
-            log.info(f"Image data length: {len(img_data)}")
-            log.info(f"First 50 chars: {img_data[:50] if img_data else 'None'}")
-        else:
+        if not img_data:
             log.error(f"No image data found. Keys: {list(data.keys())}")
-            return jsonify({'error': 'No image data provided. Expected key "img" or "frame"'}), 400
-        
-        # Check if data is None or empty string
-        if img_data is None or img_data == '':
-            log.error("Image data is None or empty")
-            return jsonify({'error': 'Image data is empty'}), 400
+            return jsonify({'error': 'No image data provided'}), 400
         
         # Handle data URL format
         if ',' in img_data and img_data.startswith('data:image'):
-            original_len = len(img_data)
             img_data = img_data.split(',')[1]
-            log.info(f"Removed data URL prefix. New length: {len(img_data)} (was {original_len})")
-        
-        # Validate base64 string looks valid
-        if len(img_data) < 100:
-            log.error(f"Base64 string too short: {len(img_data)} chars")
-            return jsonify({'error': f'Base64 string too short: {len(img_data)} chars'}), 400
         
         # Decode image
         try:
             decoded = base64.b64decode(img_data)
-            log.info(f"Decoded {len(decoded)} bytes")
             nparr = np.frombuffer(decoded, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         except Exception as e:
@@ -244,35 +232,21 @@ def infer():
             return jsonify({'error': f'Failed to decode base64: {str(e)}'}), 400
         
         if frame is None:
-            log.error("CV2 imdecode returned None - invalid image data")
-            return jsonify({'error': 'Failed to decode image - invalid format'}), 400
-        
-        log.info(f"Frame decoded successfully: {frame.shape}")
+            return jsonify({'error': 'Failed to decode image'}), 400
         
         # Get tracker and run inference
-        try:
-            t = get_tracker()
-            log.info("Tracker obtained")
-        except Exception as e:
-            log.error(f"Failed to get tracker: {e}")
-            return jsonify({'error': f'Tracker error: {str(e)}'}), 500
+        t = get_tracker()
         
-        # Run YOLO inference
-        try:
-            res = t.model.predict(
-                frame,
-                conf=cfg["model"]["confidence"],
-                iou=cfg["model"]["iou"],
-                imgsz=cfg["model"]["imgsz"],
-                device=cfg["model"]["device"],
-                half=cfg["model"]["half"],
-                classes=[0],
-                verbose=False
-            )[0]
-            log.info(f"Inference complete. Boxes: {len(res.boxes) if res.boxes else 0}")
-        except Exception as e:
-            log.error(f"Model prediction error: {e}")
-            return jsonify({'error': f'Model inference failed: {str(e)}'}), 500
+        res = t.model.predict(
+            frame,
+            conf=cfg["model"]["confidence"],
+            iou=cfg["model"]["iou"],
+            imgsz=cfg["model"]["imgsz"],
+            device=cfg["model"]["device"],
+            half=cfg["model"]["half"],
+            classes=[0],
+            verbose=False
+        )[0]
         
         # Annotate frame
         annotated = frame.copy()
@@ -292,11 +266,9 @@ def infer():
                     'class_id': cls
                 })
                 
-                # Draw bounding box
                 color = cfg["visualization"]["queen_color"]
                 cv2.rectangle(annotated, (x1, y1), (x2, y2), color, cfg["visualization"]["bbox_thickness"])
                 
-                # Draw label
                 label = f'{class_name} {conf:.0%}'
                 cv2.putText(annotated, label, (x1, y1-10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 
@@ -313,17 +285,16 @@ def infer():
             'meta': {
                 'queens': len(detections),
                 'detections': detections,
-                'inference_ms': 25,
                 'timestamp': time.time()
             }
         }
         
-        log.info(f"Returning response with {len(detections)} detections")
         return jsonify(response_data)
         
     except Exception as e:
         log.error(f"Inference error: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
 # ── Socket events ─────────────────────────────────────────────────────────────
 @socketio.on('connect')
 def handle_connect():
@@ -356,7 +327,6 @@ def handle_client_frame(data):
             emit('error', {'message': 'Failed to decode image'})
             return
         
-        # Run inference
         t = get_tracker()
         res = t.model.predict(frame, conf=cfg["model"]["confidence"], verbose=False)[0]
         
