@@ -6,13 +6,20 @@ services:
     plan: free
     region: oregon
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn wsgi:application -k gevent -w 1 --bind 0.0.0.0:$PORT --timeout 120
+    buildCommand: |
+      python --version
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: |
+      python --version
+      gunicorn wsgi:application -k gevent -w 1 --bind 0.0.0.0:$PORT --timeout 120
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.0
+        value: 3.12.14
       - key: RENDER
         value: "true"
+      - key: PIP_DEFAULT_TIMEOUT
+        value: "100"
     disk:
       name: alerts
       mountPath: /opt/render/project/src/backend/alerts

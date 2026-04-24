@@ -4,8 +4,46 @@ Flask + SocketIO + YOLOv8 Queen Detection
 """
 from __future__ import annotations
 
-import sys
+# ============================================================
+# CRITICAL: Fix engineio logger issue BEFORE any imports
+# This MUST be at the very top to prevent the 
+# "'str' object has no attribute 'info'" error
+# ============================================================
 import logging
+import engineio
+import engineio.base_server
+
+# Fix the engineio logger issue
+_original_base_init = engineio.base_server.BaseServer.__init__
+
+def _patched_base_init(self, *args, **kwargs):
+    """Remove string loggers and use proper logging object"""
+    if 'logger' in kwargs and isinstance(kwargs['logger'], str):
+        kwargs.pop('logger')
+    kwargs['logger'] = kwargs.get('logger', logging.getLogger('engineio'))
+    _original_base_init(self, *args, **kwargs)
+    if hasattr(self, 'logger') and isinstance(self.logger, str):
+        self.logger = logging.getLogger('engineio')
+
+engineio.base_server.BaseServer.__init__ = _patched_base_init
+
+# Also patch AsyncServer for WebSocket support
+if hasattr(engineio, 'async_server') and hasattr(engineio.async_server, 'AsyncServer'):
+    _original_async_init = engineio.async_server.AsyncServer.__init__
+    def _patched_async_init(self, *args, **kwargs):
+        if 'logger' in kwargs and isinstance(kwargs['logger'], str):
+            kwargs.pop('logger')
+        kwargs['logger'] = kwargs.get('logger', logging.getLogger('engineio'))
+        _original_async_init(self, *args, **kwargs)
+        if hasattr(self, 'logger') and isinstance(self.logger, str):
+            self.logger = logging.getLogger('engineio')
+    engineio.async_server.AsyncServer.__init__ = _patched_async_init
+
+# ============================================================
+# Regular imports continue here
+# ============================================================
+
+import sys
 from pathlib import Path
 from typing import Dict, Any
 
@@ -47,7 +85,7 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = "bee-ai-pro-secret"
 
 # CORS configuration - Allow local dev + production
-PRODUCTION_ORIGIN = "https://bee-vision-ai.onrender.com"  # ← ADD THIS LINE
+PRODUCTION_ORIGIN = "https://bee-vision-ai.onrender.com"
 
 CORS(app, 
      origins=[
@@ -64,18 +102,20 @@ CORS(app,
 import os
 _is_render = os.environ.get('RENDER', False)
 
-# Configure SocketIO properly
+# Configure SocketIO properly - disabled loggers to avoid issues
 socketio = SocketIO(
     app,
     cors_allowed_origins="*" if _is_render else ["http://localhost:5173", "http://localhost:3000"],
     async_mode='gevent',  # Force gevent mode
-    logger=True,
-    engineio_logger=True,
+    logger=False,  # Disabled to prevent logger issues
+    engineio_logger=False,  # Disabled to prevent logger issues
     ping_timeout=60,
     ping_interval=25,
     max_http_buffer_size=10**7,
     http_compression=True
 )
+
+log.info(f"SocketIO initialized with async_mode: {socketio.async_mode}")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 def load_config() -> Dict[str, Any]:
