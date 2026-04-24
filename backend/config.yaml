@@ -1,5 +1,5 @@
 model:
-  weights: yolov8n.pt  # ← Changé de best.pt à yolov8n.pt (auto-téléchargé)
+  weights: models/weights/best.pt
   confidence: 0.75
   iou: 0.50
   imgsz: 416
@@ -32,7 +32,7 @@ alerts:
 
 server:
   host: "0.0.0.0"
-  port_range: [10000, 10000]
+  port_range: [10000, 10000]  # Render uses PORT env var
 
 visualization:
   queen_color: [0, 180, 255]
