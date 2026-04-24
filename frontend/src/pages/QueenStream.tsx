@@ -19,23 +19,75 @@ export default function QueenStream() {
   const [confidence, setConfidence] = useState(0);
   const [lastMsg, setLastMsg] = useState("");
 
+  const getCameraStream = async (): Promise<MediaStream> => {
+    // Try 1: ideal mobile setup (rear camera + HD)
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+    } catch (err) {
+      console.warn("Camera try 1 failed (environment HD):", err);
+    }
+
+    // Try 2: any camera with HD (desktop/laptops without rear cam)
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+    } catch (err) {
+      console.warn("Camera try 2 failed (any HD):", err);
+    }
+
+    // Try 3: basic VGA fallback (low-res webcams / virtual cameras)
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      });
+    } catch (err) {
+      console.warn("Camera try 3 failed (VGA):", err);
+    }
+
+    // Try 4: absolute minimal fallback
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      });
+    } catch (err) {
+      console.warn("Camera try 4 failed (default):", err);
+      throw err;
+    }
+  };
+
   const start = async () => {
     setLastMsg("");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { min: 1280, ideal: 1920 }, height: { min: 720, ideal: 1080 } },
-        audio: false,
-      });
+      const stream = await getCameraStream();
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        // Some browsers need a small delay before play() after setting srcObject
+        await new Promise((resolve) => setTimeout(resolve, 150));
         await videoRef.current.play();
       }
       setStreaming(true);
       startInferenceLoop();
-    } catch (e) {
+    } catch (e: any) {
       console.error("Camera error", e);
-      setLastMsg("Camera access denied or unavailable");
+      if (e.name === "NotAllowedError" || e.name === "PermissionDeniedError") {
+        setLastMsg("Camera permission denied. Please allow camera access in your browser settings.");
+      } else if (e.name === "NotFoundError" || e.name === "DevicesNotFoundError") {
+        setLastMsg("No camera found. Please connect a webcam and try again.");
+      } else if (e.name === "OverconstrainedError") {
+        setLastMsg("Camera cannot meet requested resolution. Try a different camera.");
+      } else if (e.name === "AbortError") {
+        setLastMsg("Camera timed out. It may be in use by another application.");
+      } else {
+        setLastMsg("Camera access failed: " + (e.message || "Unknown error"));
+      }
     }
   };
 
