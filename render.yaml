@@ -5,7 +5,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r backend/requirements.txt
-    startCommand: cd backend && gunicorn wsgi:application -k eventlet -w 1 --bind 0.0.0.0:$PORT
+    startCommand: cd backend && gunicorn wsgi:application -k gevent -w 1 --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.11

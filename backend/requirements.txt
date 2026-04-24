@@ -8,6 +8,7 @@ Pillow==10.4.0
 ultralytics==8.3.40
 supervision==0.24.0
 gunicorn==21.2.0
-eventlet==0.36.0  # Required for WebSocket!
+gevent>=24.11.1  # Required for WebSocket with gunicorn
+greenlet>=3.1.1
 python-engineio==4.9.0
 python-socketio==5.11.0

@@ -23,7 +23,7 @@ print("""
 ╔══════════════════════════════════════════════════════╗
 ║                                                      ║
 ║   🐝  BEE AI PRO  —  Queen Detection System         ║
-║       Mode Gunicorn pour Render                      ║
+║       Mode Gunicorn + Gevent pour Render             ║
 ║                                                      ║
 ╚══════════════════════════════════════════════════════╝""")
 

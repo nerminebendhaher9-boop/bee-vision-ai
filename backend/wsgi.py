@@ -1,5 +1,5 @@
 """
-wsgi.py — For Gunicorn on Render with Eventlet
+wsgi.py — For Gunicorn on Render with Gevent
 """
 from __future__ import annotations
 
@@ -21,16 +21,16 @@ log = logging.getLogger("bee.wsgi")
 print("""
 ╔══════════════════════════════════════════════════════╗
 ║   🐝  BEE AI PRO  —  Queen Detection System         ║
-║       Running on Gunicorn + Eventlet                ║
+║       Running on Gunicorn + Gevent                  ║
 ╚══════════════════════════════════════════════════════╝""")
 
-# Monkey patch for eventlet BEFORE any other imports (critical!)
+# Monkey patch for gevent BEFORE any other imports (critical!)
 try:
-    import eventlet
-    eventlet.monkey_patch()
-    log.info("✅ Eventlet monkey patch applied")
+    from gevent import monkey
+    monkey.patch_all()
+    log.info("✅ Gevent monkey patch applied")
 except ImportError:
-    log.warning("Eventlet not available, WebSocket may not work")
+    log.warning("Gevent not available, WebSocket may not work")
 
 # Now import the application
 from app import app, get_tracker, start_broadcast
@@ -42,5 +42,5 @@ application = app
 # The tracker will initialize on first request to /infer or /stats
 # This prevents startup crashes if model weights are missing
 log.info("WSGI application ready")
-log.info("Start command: gunicorn wsgi:application -k eventlet -w 1 --bind 0.0.0.0:$PORT")
+log.info("Start command: gunicorn wsgi:application -k gevent -w 1 --bind 0.0.0.0:$PORT")
 

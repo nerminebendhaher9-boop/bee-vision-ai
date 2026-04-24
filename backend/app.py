@@ -67,7 +67,7 @@ _is_render = os.environ.get('RENDER', False)
 socketio = SocketIO(
     app,
     cors_allowed_origins="*" if _is_render else ["http://localhost:8080", "http://localhost:5173"],
-    async_mode='eventlet' if _is_render else 'threading',
+    async_mode='gevent' if _is_render else 'threading',
     logger=_is_render,
     engineio_logger=_is_render,
     ping_timeout=60,
