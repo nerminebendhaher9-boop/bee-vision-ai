@@ -35,44 +35,53 @@ print("""
 
 log.info("✅ Gevent monkey patch applied")
 
-# FIX ENGINEIO LOGGER ISSUE FOR PYTHON 3.14
+# ============================================================
+# CRITICAL FIX: Patch engineio BEFORE importing app
+# This MUST be here, not in app.py
+# ============================================================
 import engineio
 import engineio.base_server
 
-# Monkey patch the BaseServer to fix logger issue
-_original_init = engineio.base_server.BaseServer.__init__
+# Save original init
+_original_base_init = engineio.base_server.BaseServer.__init__
 
-def _patched_init(self, *args, **kwargs):
+def _patched_base_init(self, *args, **kwargs):
+    """Fix the logger issue by removing string loggers"""
     # Remove logger if it's a string
     if 'logger' in kwargs and isinstance(kwargs['logger'], str):
         kwargs.pop('logger')
-    # Set our logger
-    kwargs['logger'] = log
-    _original_init(self, *args, **kwargs)
+    # Set a proper logger
+    if 'logger' not in kwargs:
+        kwargs['logger'] = log
+    # Call original
+    _original_base_init(self, *args, **kwargs)
     # Force set logger if it became a string
     if hasattr(self, 'logger') and isinstance(self.logger, str):
         self.logger = log
 
-engineio.base_server.BaseServer.__init__ = _patched_init
+# Apply the patch
+engineio.base_server.BaseServer.__init__ = _patched_base_init
 
-# Also patch AsyncServer if it exists
+# Also patch AsyncServer for WebSocket support
 if hasattr(engineio, 'async_server') and hasattr(engineio.async_server, 'AsyncServer'):
     _original_async_init = engineio.async_server.AsyncServer.__init__
     def _patched_async_init(self, *args, **kwargs):
         if 'logger' in kwargs and isinstance(kwargs['logger'], str):
             kwargs.pop('logger')
-        kwargs['logger'] = log
+        if 'logger' not in kwargs:
+            kwargs['logger'] = log
         _original_async_init(self, *args, **kwargs)
         if hasattr(self, 'logger') and isinstance(self.logger, str):
             self.logger = log
     engineio.async_server.AsyncServer.__init__ = _patched_async_init
 
-log.info("✅ EngineIO logger patched for Python 3.14 compatibility")
+log.info("✅ EngineIO logger patched")
 
-# Now import the application
+# Now import the application (after ALL patches)
 from app import app, get_tracker, start_broadcast
 
 # WSGI application
 application = app
 
 log.info("WSGI application ready")
+log.info(f"Python version: {sys.version}")
