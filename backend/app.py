@@ -37,10 +37,8 @@ from detector.tracker import BeeTracker
 
 print("""
 ╔══════════════════════════════════════════════════════╗
-║                                                      ║
 ║   🐝  BEE AI PRO  —  Queen Detection System         ║
 ║            Ready for Render Deployment              ║
-║                                                      ║
 ╚══════════════════════════════════════════════════════╝""")
 
 # ── App setup ─────────────────────────────────────────────────────────────────
@@ -98,7 +96,7 @@ def get_tracker() -> BeeTracker:
     if tracker is None:
         try:
             tracker = BeeTracker(cfg)
-            log.info("✅ BeeTracker model loaded")
+            log.info("✅ BeeTracker model loaded successfully")
         except Exception as e:
             log.error(f"Failed to start tracker: {e}")
             tracker = None
@@ -175,8 +173,9 @@ def health():
     if request.method == 'OPTIONS':
         return '', 200
     
-    # Vérifier le statut du tracker
-    tracker_status = tracker is not None
+    # Get tracker status
+    t = get_tracker()
+    tracker_status = t is not None
     
     return jsonify({
         "status": "ok",
@@ -205,14 +204,20 @@ def infer():
         if not data:
             return jsonify({'error': 'No JSON data provided'}), 400
         
+        # Get image data
         img_data = data.get('img') or data.get('frame')
         
         if not img_data:
             return jsonify({'error': 'No image data provided'}), 400
         
-        # Handle data URL format - remove prefix if present
+        # Remove data URL prefix if present
         if ',' in img_data and img_data.startswith('data:image'):
             img_data = img_data.split(',')[1]
+        
+        # Fix base64 padding
+        missing_padding = len(img_data) % 4
+        if missing_padding:
+            img_data += '=' * (4 - missing_padding)
         
         # Decode image
         try:
@@ -228,7 +233,10 @@ def infer():
         
         # Get tracker and run inference
         t = get_tracker()
+        if t is None:
+            return jsonify({'error': 'Tracker not available'}), 503
         
+        # Run YOLO inference
         res = t.model.predict(
             frame,
             conf=cfg["model"]["confidence"],
@@ -236,7 +244,7 @@ def infer():
             imgsz=cfg["model"]["imgsz"],
             device=cfg["model"]["device"],
             half=cfg["model"]["half"],
-            classes=[0],
+            classes=[0],  # Queen class only
             verbose=False
         )[0]
         
@@ -247,33 +255,37 @@ def infer():
         if res.boxes and len(res.boxes) > 0:
             for box in res.boxes:
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                conf = box.conf[0].cpu().numpy()
+                conf = float(box.conf[0].cpu().numpy())
                 cls = int(box.cls[0])
                 class_name = cfg["classes"].get(cls, f"class_{cls}")
                 
                 detections.append({
                     'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                    'confidence': float(conf),
+                    'confidence': conf,
                     'class': class_name,
                     'class_id': cls
                 })
                 
+                # Draw bounding box
                 color = cfg["visualization"]["queen_color"]
-                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, cfg["visualization"]["bbox_thickness"])
+                thickness = cfg["visualization"]["bbox_thickness"]
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness)
                 
+                # Draw label
                 label = f'{class_name} {conf:.0%}'
+                font_scale = cfg["visualization"]["font_scale"]
                 cv2.putText(annotated, label, (x1, y1-10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 
-                           cfg["visualization"]["font_scale"], 
+                           font_scale, 
                            color, 
-                           cfg["visualization"]["bbox_thickness"])
+                           thickness)
         
-        # Encode annotated image - return ONLY base64 (no prefix)
+        # Encode annotated image (return only base64, frontend will add prefix)
         _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
         img_b64 = base64.b64encode(buffer).decode('utf-8')
         
         response_data = {
-            'img': img_b64,  # ← Only base64, no data:image prefix
+            'img': img_b64,  # Base64 only, no data:image prefix
             'meta': {
                 'queens': len(detections),
                 'detections': detections,
@@ -302,14 +314,21 @@ def handle_disconnect():
 
 @socketio.on('client_frame')
 def handle_client_frame(data):
+    """Handle frame from client browser for inference"""
     try:
         img_data = data.get('img') or data.get('frame')
         if not img_data:
             emit('error', {'message': 'No image data'})
             return
         
+        # Remove data URL prefix if present
         if ',' in img_data and img_data.startswith('data:image'):
             img_data = img_data.split(',')[1]
+        
+        # Fix base64 padding
+        missing_padding = len(img_data) % 4
+        if missing_padding:
+            img_data += '=' * (4 - missing_padding)
         
         nparr = np.frombuffer(base64.b64decode(img_data), np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -319,16 +338,20 @@ def handle_client_frame(data):
             return
         
         t = get_tracker()
+        if t is None:
+            emit('error', {'message': 'Tracker not available'})
+            return
+        
         res = t.model.predict(frame, conf=cfg["model"]["confidence"], verbose=False)[0]
         
         detections = []
         if len(res.boxes) > 0:
             for box in res.boxes:
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                conf = box.conf[0].cpu().numpy()
+                conf = float(box.conf[0].cpu().numpy())
                 detections.append({
                     'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                    'confidence': float(conf)
+                    'confidence': conf
                 })
         
         emit('inference_result', {'detections': detections, 'count': len(detections)})
@@ -339,13 +362,15 @@ def handle_client_frame(data):
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
+    # Initialize tracker on startup
     get_tracker()
     start_broadcast()
     
     host = cfg["server"]["host"]
-    port = cfg["server"]["port_range"][0]
+    port = int(os.environ.get('PORT', 10000))
     
-    log.info(f"🚀 Starting on http://{host}:{port}")
+    log.info(f"🚀 Starting BEE AI PRO on http://{host}:{port}")
     socketio.run(app, host=host, port=port, debug=False)
 else:
+    # For imports (wsgi/gunicorn)
     log.info("App created - will initialize on first request")
