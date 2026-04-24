@@ -48,16 +48,19 @@ app.config["SECRET_KEY"] = "bee-ai-pro-secret"
 # CORS configuration
 PRODUCTION_ORIGIN = "https://bee-vision-ai.onrender.com"
 
-CORS(app, 
-     origins=[
-         "http://localhost:5173",
-         "http://localhost:3000",
-         "http://localhost:8080",
-         PRODUCTION_ORIGIN
-     ],
-     allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-     supports_credentials=True)
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "http://localhost:8080",
+            PRODUCTION_ORIGIN
+        ],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "supports_credentials": True
+    }
+})
 
 # ── SocketIO configuration ──────────────────────────────────────────────────────
 import os
@@ -130,17 +133,6 @@ def start_broadcast():
     thread.start()
     log.info("✅ Broadcast started")
 
-@app.after_request
-def after_request(response):
-    origin = request.headers.get('Origin')
-    allowed = ["http://localhost:5173", "http://localhost:3000", "http://localhost:8080", PRODUCTION_ORIGIN]
-    if origin in allowed:
-        response.headers.add('Access-Control-Allow-Origin', origin)
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
-
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route('/stats')
 def stats():
@@ -168,11 +160,8 @@ def get_alert(filename):
     except Exception as e:
         return jsonify({'error': str(e)}), 404
 
-@app.route('/health', methods=['GET', 'OPTIONS'])
+@app.route('/health', methods=['GET'])
 def health():
-    if request.method == 'OPTIONS':
-        return '', 200
-    
     # Get tracker status
     t = get_tracker()
     tracker_status = t is not None
@@ -194,11 +183,8 @@ def test():
         'config_loaded': True
     })
 
-@app.route('/infer', methods=['POST', 'OPTIONS'])
+@app.route('/infer', methods=['POST'])
 def infer():
-    if request.method == 'OPTIONS':
-        return '', 200
-    
     try:
         data = request.json
         if not data:
