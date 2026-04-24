@@ -69,19 +69,13 @@ socketio = SocketIO(
     app,
     cors_allowed_origins="*" if _is_render else ["http://localhost:5173", "http://localhost:3000"],
     async_mode='gevent',  # Force gevent mode
-    logger=False,  # Disable to avoid string logger issue
-    engineio_logger=False,  # Disable to avoid string logger issue
+    logger=True,
+    engineio_logger=True,
     ping_timeout=60,
     ping_interval=25,
     max_http_buffer_size=10**7,
     http_compression=True
 )
-
-# Manually set the logger after initialization to avoid the AttributeError
-if hasattr(socketio, 'server') and hasattr(socketio.server, 'logger'):
-    socketio.server.logger = log
-if hasattr(socketio, 'eio') and hasattr(socketio.eio, 'logger'):
-    socketio.eio.logger = log
 
 # ── Config ────────────────────────────────────────────────────────────────────
 def load_config() -> Dict[str, Any]:

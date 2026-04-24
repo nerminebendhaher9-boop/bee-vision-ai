@@ -17,7 +17,6 @@ services:
       name: alerts
       mountPath: /opt/render/project/src/backend/alerts
       sizeGB: 1
-
   # Frontend Static Site
   - type: static
     name: bee-vision-ai
@@ -28,4 +27,3 @@ services:
     envVars:
       - key: VITE_BACKEND_URL
         value: https://bee-vision-ai-b.onrender.com
-

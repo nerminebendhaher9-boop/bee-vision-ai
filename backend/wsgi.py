@@ -36,8 +36,4 @@ from app import app, get_tracker, start_broadcast
 # WSGI application
 application = app
 
-# Disable logger string issue by configuring engineio properly
-import engineio
-engineio.logger = log
-
 log.info("WSGI application ready")
