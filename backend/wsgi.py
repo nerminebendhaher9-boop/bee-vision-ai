@@ -10,7 +10,6 @@ from pathlib import Path
 # Add paths
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT.parent))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,10 +24,7 @@ print("""
 ║       Running on Gunicorn + Eventlet                ║
 ╚══════════════════════════════════════════════════════╝""")
 
-# Import application
-from app import app, socketio, get_tracker, start_broadcast
-
-# Monkey patch for eventlet (important!)
+# Monkey patch for eventlet BEFORE any other imports (critical!)
 try:
     import eventlet
     eventlet.monkey_patch()
@@ -36,25 +32,15 @@ try:
 except ImportError:
     log.warning("Eventlet not available, WebSocket may not work")
 
-# Initialize tracker
-log.info("Initializing tracker...")
-try:
-    tracker = get_tracker()
-    if tracker:
-        log.info("✅ Tracker initialized")
-except Exception as e:
-    log.error(f"Tracker init error: {e}")
-    log.info("Tracker will initialize on first request")
-
-# Start broadcast
-try:
-    start_broadcast()
-    log.info("✅ Broadcast started")
-except Exception as e:
-    log.warning(f"Broadcast not started: {e}")
+# Now import the application
+from app import app, get_tracker, start_broadcast
 
 # WSGI application
 application = app
 
-log.info("WSGI application ready for Gunicorn with Eventlet")
+# Lazy initialization — do NOT load model at import time on Render
+# The tracker will initialize on first request to /infer or /stats
+# This prevents startup crashes if model weights are missing
+log.info("WSGI application ready")
 log.info("Start command: gunicorn wsgi:application -k eventlet -w 1 --bind 0.0.0.0:$PORT")
+

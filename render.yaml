@@ -1,0 +1,29 @@
+services:
+  # Backend API service
+  - type: web
+    name: bee-vision-ai-b
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && gunicorn wsgi:application -k eventlet -w 1 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: RENDER
+        value: "true"
+    disk:
+      name: alerts
+      mountPath: /opt/render/project/src/backend/alerts
+      sizeGB: 1
+
+  # Frontend static site
+  - type: static
+    name: bee-vision-ai
+    runtime: static
+    plan: free
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/dist
+    envVars:
+      - key: VITE_BACKEND_URL
+        value: https://bee-vision-ai-b.onrender.com
+

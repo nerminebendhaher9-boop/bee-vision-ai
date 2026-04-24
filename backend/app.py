@@ -48,24 +48,28 @@ app.config["SECRET_KEY"] = "bee-ai-pro-secret"
 
 # Replace your current CORS configuration with this:
 
-# CORS configuration - Allow all necessary origins
+# CORS configuration - Allow local dev + production
+PRODUCTION_ORIGIN = "https://bee-vision-ai.onrender.com"
 CORS(app, 
      origins=[
          "http://localhost:5173",
          "http://localhost:3000",
-         "http://localhost:8080"
+         "http://localhost:8080",
+         PRODUCTION_ORIGIN
      ],
      allow_headers=["Content-Type", "Authorization"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      supports_credentials=True)
 
-# SocketIO configuration for Render
+# SocketIO configuration - use eventlet for gunicorn compatibility
+import os
+_is_render = os.environ.get('RENDER', False)
 socketio = SocketIO(
     app,
-    cors_allowed_origins="*",  # Allow all origins for WebSocket
-    async_mode='threading',
-    logger=True,
-    engineio_logger=True,
+    cors_allowed_origins="*" if _is_render else ["http://localhost:8080", "http://localhost:5173"],
+    async_mode='eventlet' if _is_render else 'threading',
+    logger=_is_render,
+    engineio_logger=_is_render,
     ping_timeout=60,
     ping_interval=25
 )
@@ -127,7 +131,8 @@ def start_broadcast():
 @app.after_request
 def after_request(response):
     origin = request.headers.get('Origin')
-    if origin in ["http://localhost:5173", "http://localhost:3000", "http://localhost:8080"]:
+    allowed = ["http://localhost:5173", "http://localhost:3000", "http://localhost:8080", PRODUCTION_ORIGIN]
+    if origin in allowed:
         response.headers.add('Access-Control-Allow-Origin', origin)
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')

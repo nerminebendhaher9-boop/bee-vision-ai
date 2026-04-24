@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { StatTile } from "@/components/StatTile";
 import { cn } from "@/lib/utils";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "https://bee-vision-ai-b.onrender.com";
 
 export default function QueenStream() {
   const videoRef = useRef<HTMLVideoElement>(null);
