@@ -39,7 +39,6 @@ export default function QueenStream() {
   }, []);
 
   const getCameraStream = async (): Promise<MediaStream> => {
-    // Try 1: ideal mobile setup (rear camera + HD)
     try {
       return await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
@@ -48,8 +47,6 @@ export default function QueenStream() {
     } catch (err) {
       console.warn("Camera try 1 failed (environment HD):", err);
     }
-
-    // Try 2: any camera with HD (desktop/laptops without rear cam)
     try {
       return await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
@@ -58,8 +55,6 @@ export default function QueenStream() {
     } catch (err) {
       console.warn("Camera try 2 failed (any HD):", err);
     }
-
-    // Try 3: basic VGA fallback (low-res webcams / virtual cameras)
     try {
       return await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 } },
@@ -68,8 +63,6 @@ export default function QueenStream() {
     } catch (err) {
       console.warn("Camera try 3 failed (VGA):", err);
     }
-
-    // Try 4: absolute minimal fallback
     try {
       return await navigator.mediaDevices.getUserMedia({
         video: true,
@@ -88,7 +81,6 @@ export default function QueenStream() {
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        // Some browsers need a small delay before play() after setting srcObject
         await new Promise((resolve) => setTimeout(resolve, 150));
         await videoRef.current.play();
       }
@@ -178,7 +170,7 @@ export default function QueenStream() {
         }
       } catch (e) {
         console.error("Fetch error:", e);
-        setLastMsg("Backend unreachable — is the server running on :7000?");
+        setLastMsg("Backend unreachable — check the deployed URL or server status.");
       }
     }, 200);
   };
@@ -293,4 +285,3 @@ export default function QueenStream() {
     </div>
   );
 }
-
