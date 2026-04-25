@@ -86,7 +86,8 @@ def _load_model_background():
             w = ROOT / w
         if not w.exists():
             raise FileNotFoundError(f"Weights not found: {w}")
-        log.info("🔄 Loading YOLO model from %s ...", w)
+        size_mb = round(w.stat().st_size / 1024 / 1024, 1)
+        log.info("🔄 Loading YOLO model from %s (%.1f MB)...", w, size_mb)
         model = YOLO(str(w), task='detect')
         with _model_lock:
             _model = model
@@ -95,7 +96,9 @@ def _load_model_background():
         _model_error = str(e)
         log.error("❌ Model load failed: %s", e)
 
-threading.Thread(target=_load_model_background, daemon=True, name="model-loader").start()
+t = threading.Thread(target=_load_model_background, daemon=True, name="model-loader")
+t.start()
+log.info("🚀 Model loader thread started: alive=%s", t.is_alive())
 
 # ── Keep alive ─────────────────────────────────────────────────────────────────
 def _keep_alive():
@@ -127,6 +130,19 @@ def health():
         "model_loaded": _model is not None,
         "model_error": _model_error,
         "timestamp": datetime.now().isoformat()
+    })
+
+@app.route('/debug', methods=['GET'])
+def debug():
+    w = ROOT / cfg["model"]["weights"]
+    exists = w.exists()
+    return jsonify({
+        "weights_path": str(w),
+        "file_exists": exists,
+        "file_size_mb": round(w.stat().st_size / 1024 / 1024, 1) if exists else None,
+        "model_loaded": _model is not None,
+        "model_error": _model_error,
+        "root": str(ROOT),
     })
 
 @app.route('/test', methods=['GET'])
@@ -170,7 +186,6 @@ def get_alert(filename):
 @app.route('/infer', methods=['POST'])
 def infer():
     try:
-        # Wait up to 180s for model
         waited = 0
         while _model is None and _model_error is None and waited < 180:
             time.sleep(1)
