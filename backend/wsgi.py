@@ -1,29 +1,24 @@
 from gevent import monkey
-monkey.patch_all(thread=False)
+monkey.patch_all()
 
 import sys
 import os
 from pathlib import Path
 
+# Ajoutez le répertoire parent au PYTHONPATH pour que app.py soit trouvable
 backend_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(backend_dir))
 
-os.environ['OMP_NUM_THREADS'] = '1'
-os.environ['MKL_NUM_THREADS'] = '1'
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-os.environ['PYTHONMALLOC'] = 'malloc'
-os.environ['PYTORCH_NO_CUDA_MEMORY_CACHING'] = '1'
-os.environ['YOLO_VERBOSE'] = 'False'
+# Importez l'application Flask et SocketIO après le monkey patching
+from app import app, socketio, _load_model_background, log
 
-from app import app, socketio
-
-# Load model synchronously before gunicorn starts serving
-print("⏳ Loading YOLO model at startup...")
+# Chargez le modèle de manière synchrone avant que Gunicorn ne commence à servir
+log.info("⏳ Loading YOLO model at startup (from wsgi.py)...")
 try:
-    from app import _load_model_background
     _load_model_background()
-    print("✅ Model ready")
+    log.info("✅ Model ready (from wsgi.py)")
 except Exception as e:
-    print(f"❌ Model load failed: {e}")
+    log.error(f"❌ Model load failed (from wsgi.py): {e}")
 
+# L'application pour Gunicorn
 application = app

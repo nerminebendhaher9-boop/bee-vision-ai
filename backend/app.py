@@ -13,11 +13,11 @@ from datetime import datetime
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-os.environ['OMP_NUM_THREADS'] = '1'
-os.environ['MKL_NUM_THREADS'] = '1'
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-os.environ['PYTORCH_NO_CUDA_MEMORY_CACHING'] = '1'
-os.environ['YOLO_VERBOSE'] = 'False'
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"
+os.environ["YOLO_VERBOSE"] = "False"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,9 +35,9 @@ import numpy as np
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "bee-ai-pro-secret"
-app.config['JSON_SORT_KEYS'] = False
+app.config["JSON_SORT_KEYS"] = False
 
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://bee-vision-ai.onrender.com')
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://bee-vision-ai.onrender.com")
 ALLOWED_ORIGINS = list(dict.fromkeys([
     FRONTEND_URL,
     "http://localhost:5173",
@@ -54,7 +54,7 @@ CORS(app,
 socketio = SocketIO(
     app,
     cors_allowed_origins=ALLOWED_ORIGINS,
-    async_mode='gevent',
+    async_mode="gevent",
     logger=False,
     engineio_logger=False,
     ping_timeout=60,
@@ -96,16 +96,14 @@ def _load_model_background():
         _model_error = str(e)
         log.error("❌ Model load failed: %s", e)
 
-t = threading.Thread(target=_load_model_background, daemon=True, name="model-loader")
-t.start()
-log.info("🚀 Model loader thread started: alive=%s", t.is_alive())
+# Le chargement du modèle est maintenant déclenché par wsgi.py
 
 # ── Keep alive ─────────────────────────────────────────────────────────────────
 def _keep_alive():
     while True:
         time.sleep(60)
         try:
-            port = os.environ.get('PORT', 10000)
+            port = os.environ.get("PORT", 10000)
             urllib.request.urlopen(f"http://localhost:{port}/health", timeout=5)
         except Exception:
             pass
@@ -220,18 +218,27 @@ def infer():
         except Exception as e:
             return jsonify({'error': f'Image decode failed: {e}'}), 400
 
+        m = cfg["model"]
+        v = cfg.get("visualization", {})
+        a = cfg.get("alerts", {})
+
         res = _model.predict(
             frame,
-            conf=cfg["model"].get("confidence", 0.75),
-            iou=cfg["model"].get("iou", 0.50),
-            imgsz=320,
-            device="cpu",
-            half=False,
+            conf=m.get("confidence", 0.75),
+            iou=m.get("iou", 0.50),
+            imgsz=m.get("imgsz", 320),
+            device=m.get("device", "cpu"),
+            half=m.get("half", False),
             verbose=False,
             classes=[0],
         )[0]
 
         detections = []
+        queen_color = tuple(v.get("queen_color", [0, 180, 255]))
+        bbox_thickness = v.get("bbox_thickness", 2)
+        font_scale = v.get("font_scale", 0.6)
+        show_confidence = v.get("show_confidence", True)
+
         if res.boxes and len(res.boxes) > 0:
             for box in res.boxes:
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
@@ -241,12 +248,16 @@ def infer():
                     'confidence': round(conf, 3),
                     'class': 'queen'
                 })
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 180, 255), 2)
-                label = f"queen {conf:.0%}"
+                cv2.rectangle(frame, (x1, y1), (x2, y2), queen_color, bbox_thickness)
+                label_parts = ["queen"]
+                if show_confidence:
+                    label_parts.append(f"{conf:.0%}")
+                label = " ".join(label_parts)
                 cv2.putText(frame, label, (x1, max(y1 - 8, 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 180, 255), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, queen_color, 2)
 
-        _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        jpeg_quality = a.get("jpeg_quality", 80)
+        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
         img_b64 = base64.b64encode(buf).decode('utf-8')
 
         return jsonify({
@@ -271,8 +282,9 @@ def handle_connect():
 def handle_disconnect():
     log.info("Client disconnected: %s", request.sid)
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    socketio.run(app, host='0.0.0.0', port=port, debug=False)
-else:
-    log.info("Loaded by gunicorn")
+log.info("Loaded by gunicorn")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host="0.0.0.0", port=port)
+
