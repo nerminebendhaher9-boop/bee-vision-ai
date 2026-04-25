@@ -20,7 +20,7 @@ export default function QueenStream() {
   const [lastMsg, setLastMsg] = useState("");
   const [backendReady, setBackendReady] = useState(false);
 
-  // Ping backend health on mount to verify connectivity
+  // Ping backend health on mount
   useEffect(() => {
     fetch(`${BACKEND_URL}/health`)
       .then((res) => {
@@ -39,39 +39,10 @@ export default function QueenStream() {
   }, []);
 
   const getCameraStream = async (): Promise<MediaStream> => {
-    try {
-      return await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: false,
-      });
-    } catch (err) {
-      console.warn("Camera try 1 failed (environment HD):", err);
-    }
-    try {
-      return await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: false,
-      });
-    } catch (err) {
-      console.warn("Camera try 2 failed (any HD):", err);
-    }
-    try {
-      return await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      });
-    } catch (err) {
-      console.warn("Camera try 3 failed (VGA):", err);
-    }
-    try {
-      return await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: false,
-      });
-    } catch (err) {
-      console.warn("Camera try 4 failed (default):", err);
-      throw err;
-    }
+    return await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" },
+      audio: false,
+    });
   };
 
   const start = async () => {
@@ -93,7 +64,7 @@ export default function QueenStream() {
       } else if (e.name === "NotFoundError" || e.name === "DevicesNotFoundError") {
         setLastMsg("No camera found. Please connect a webcam and try again.");
       } else if (e.name === "OverconstrainedError") {
-        setLastMsg("Camera cannot meet requested resolution. Try a different camera.");
+        setLastMsg("Camera cannot meet requested constraints. Try a different camera.");
       } else if (e.name === "AbortError") {
         setLastMsg("Camera timed out. It may be in use by another application.");
       } else {
@@ -137,7 +108,7 @@ export default function QueenStream() {
       }
 
       ctx.drawImage(video, 0, 0);
-      const base64 = canvas.toDataURL("image/jpeg", 0.92);
+      const base64 = canvas.toDataURL("image/jpeg", 0.7);
 
       try {
         const res = await fetch(`${BACKEND_URL}/infer`, {
@@ -160,6 +131,7 @@ export default function QueenStream() {
         setDetections(meta.queens ?? 0);
         const confs = (meta.detections || []).map((d: any) => d.confidence);
         setConfidence(confs.length ? Math.max(...confs) : 0);
+        setLastMsg("");
 
         frames++;
         const now = performance.now();
@@ -172,7 +144,7 @@ export default function QueenStream() {
         console.error("Fetch error:", e);
         setLastMsg("Backend unreachable — check the deployed URL or server status.");
       }
-    }, 200);
+    }, 1000);
   };
 
   return (
@@ -220,7 +192,9 @@ export default function QueenStream() {
               />
               <div>
                 <p className="text-sm font-semibold text-foreground">Hive camera offline</p>
-                <p className="text-xs text-muted-foreground">Start the stream — AI will detect the queen bee in real time</p>
+                <p className="text-xs text-muted-foreground">
+                  Start the stream — AI will detect the queen bee in real time
+                </p>
               </div>
             </div>
           )}
@@ -260,7 +234,10 @@ export default function QueenStream() {
 
         <div className="flex items-center gap-2 border-t border-border/40 bg-background/40 p-3 backdrop-blur">
           {!streaming ? (
-            <Button onClick={start} className="flex-1 bg-gradient-primary text-primary-foreground shadow-glow hover:opacity-95">
+            <Button
+              onClick={start}
+              className="flex-1 bg-gradient-primary text-primary-foreground shadow-glow hover:opacity-95"
+            >
               <Camera className="h-4 w-4" /> Start Stream
             </Button>
           ) : (
@@ -280,7 +257,12 @@ export default function QueenStream() {
           icon={Activity}
           accent="warning"
         />
-        <StatTile label="Status" value={streaming ? "ON" : "OFF"} icon={Radio} accent={streaming ? "success" : "destructive"} />
+        <StatTile
+          label="Status"
+          value={streaming ? "ON" : "OFF"}
+          icon={Radio}
+          accent={streaming ? "success" : "destructive"}
+        />
       </div>
     </div>
   );

@@ -48,8 +48,6 @@ ALLOWED_ORIGINS = list(dict.fromkeys([
     "http://localhost:8080",
 ]))
 
-# flask-cors handles everything including OPTIONS preflight
-# Do NOT add any @after_request that sets Access-Control headers — causes duplicates
 CORS(app,
      resources={r"/*": {"origins": ALLOWED_ORIGINS}},
      supports_credentials=True,
@@ -79,7 +77,7 @@ def load_config():
 cfg = load_config()
 log.info("Config loaded")
 
-# ── Model (lazy, no camera loop on Render) ─────────────────────────────────────
+# ── Model ──────────────────────────────────────────────────────────────────────
 _model = None
 _model_lock = threading.Lock()
 
@@ -167,6 +165,10 @@ def get_alert(filename):
 @app.route('/infer', methods=['POST'])
 def infer():
     try:
+        # Check model ready first
+        if _model is None:
+            return jsonify({'error': 'Model still loading, please wait...'}), 503
+
         data = request.get_json()
         if not data:
             return jsonify({'error': 'No JSON data'}), 400
@@ -200,7 +202,7 @@ def infer():
         except Exception as e:
             return jsonify({'error': f'Model not available: {e}'}), 503
 
-        # Run inference — force imgsz=320 to stay within memory limits
+        # Run inference
         res = model.predict(
             frame,
             conf=cfg["model"].get("confidence", 0.75),
@@ -222,8 +224,18 @@ def infer():
                     'confidence': round(conf, 3),
                     'class': 'queen'
                 })
+                # Draw box on frame
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 180, 255), 2)
+                label = f"queen {conf:.0%}"
+                cv2.putText(frame, label, (x1, max(y1 - 8, 10)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 180, 255), 2)
+
+        # Encode annotated frame to base64 — frontend needs this to show video
+        _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        img_b64 = base64.b64encode(buf).decode('utf-8')
 
         return jsonify({
+            'img': img_b64,
             'meta': {
                 'queens': len(detections),
                 'detections': detections,
