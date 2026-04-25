@@ -17,4 +17,13 @@ os.environ['YOLO_VERBOSE'] = 'False'
 
 from app import app, socketio
 
+# Load model synchronously before gunicorn starts serving
+print("⏳ Loading YOLO model at startup...")
+try:
+    from app import _load_model_background
+    _load_model_background()
+    print("✅ Model ready")
+except Exception as e:
+    print(f"❌ Model load failed: {e}")
+
 application = app
