@@ -1,6 +1,5 @@
-# MUST be first — before everything
 from gevent import monkey
-monkey.patch_all()
+monkey.patch_all(thread=False)
 
 import sys
 import os
@@ -13,16 +12,9 @@ os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['PYTHONMALLOC'] = 'malloc'
-
-print("""
-╔══════════════════════════════════════════════════════╗
-║   🐝  BEE AI PRO  —  Starting on Render             ║
-╚══════════════════════════════════════════════════════╝""")
+os.environ['PYTORCH_NO_CUDA_MEMORY_CACHING'] = '1'
+os.environ['YOLO_VERBOSE'] = 'False'
 
 from app import app, socketio
-
-# Model is lazy-loaded on first /infer request to avoid OOM/boot timeout
-# on Render free tier (512MB RAM). Pre-loading at import time often kills
-# the worker before gunicorn finishes booting.
 
 application = app
