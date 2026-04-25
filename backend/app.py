@@ -1,8 +1,5 @@
 """
 BEE AI PRO - Backend for Render
-- Fixed: CORS no duplicate headers
-- Fixed: Tracker not started on Render (no camera), only loaded on /infer
-- Fixed: socketio exported for wsgi
 """
 from __future__ import annotations
 
@@ -42,8 +39,6 @@ app.config["SECRET_KEY"] = "bee-ai-pro-secret"
 app.config['JSON_SORT_KEYS'] = False
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
-# Single source of truth — flask-cors handles everything including OPTIONS
-# Do NOT add @after_request that also sets these headers (causes duplicates)
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://bee-vision-ai.onrender.com')
 
 ALLOWED_ORIGINS = list(dict.fromkeys([
@@ -53,6 +48,8 @@ ALLOWED_ORIGINS = list(dict.fromkeys([
     "http://localhost:8080",
 ]))
 
+# flask-cors handles everything including OPTIONS preflight
+# Do NOT add any @after_request that sets Access-Control headers — causes duplicates
 CORS(app,
      resources={r"/*": {"origins": ALLOWED_ORIGINS}},
      supports_credentials=True,
@@ -82,10 +79,7 @@ def load_config():
 cfg = load_config()
 log.info("Config loaded")
 
-# ── Model (lazy, no camera loop on Render) ────────────────────────────────────
-# On Render there is no webcam. We load the YOLO model once on first /infer
-# call and run inference directly — no BeeTracker camera thread needed.
-
+# ── Model (lazy, no camera loop on Render) ─────────────────────────────────────
 _model = None
 _model_lock = threading.Lock()
 
@@ -96,10 +90,11 @@ def get_model():
             if _model is None:
                 try:
                     from ultralytics import YOLO
-                    from pathlib import Path as P
-                    w = P(cfg["model"]["weights"])
+                    w = Path(cfg["model"]["weights"])
                     if not w.is_absolute():
                         w = ROOT / w
+                    if not w.exists():
+                        raise FileNotFoundError(f"Weights not found: {w}")
                     log.info("Loading YOLO model from %s ...", w)
                     _model = YOLO(str(w), task='detect')
                     log.info("✅ Model loaded")
@@ -122,10 +117,9 @@ def index():
 
 @app.route('/health', methods=['GET'])
 def health():
-    model_ready = _model is not None
     return jsonify({
         "status": "ok",
-        "model_loaded": model_ready,
+        "model_loaded": _model is not None,
         "timestamp": datetime.now().isoformat()
     })
 
@@ -200,18 +194,18 @@ def infer():
         except Exception as e:
             return jsonify({'error': f'Image decode failed: {e}'}), 400
 
-        # Load model (lazy)
+        # Get model
         try:
             model = get_model()
         except Exception as e:
             return jsonify({'error': f'Model not available: {e}'}), 503
 
-        # Run inference
+        # Run inference — force imgsz=320 to stay within memory limits
         res = model.predict(
             frame,
             conf=cfg["model"].get("confidence", 0.75),
             iou=cfg["model"].get("iou", 0.50),
-            imgsz=cfg["model"].get("imgsz", 320),
+            imgsz=320,
             device="cpu",
             half=False,
             verbose=False,

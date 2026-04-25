@@ -6,9 +6,7 @@ services:
     plan: free
     region: oregon
     rootDir: backend
-    buildCommand: |
-  
-      pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --worker-class gevent --workers 1 --bind 0.0.0.0:$PORT wsgi:app
     envVars:
       - key: PYTHON_VERSION
@@ -30,3 +28,4 @@ services:
     envVars:
       - key: VITE_BACKEND_URL
         value: https://bee-vision-ai-b.onrender.com
+        

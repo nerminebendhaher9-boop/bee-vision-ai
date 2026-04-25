@@ -1,6 +1,7 @@
-"""
-wsgi.py - Gunicorn entry point for Render
-"""
+# MUST be first — before everything
+from gevent import monkey
+monkey.patch_all()
+
 import sys
 import os
 from pathlib import Path
@@ -13,10 +14,18 @@ os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['PYTHONMALLOC'] = 'malloc'
 
-from app import app, socketio  # FIX: must import socketio too
+print("""
+╔══════════════════════════════════════════════════════╗
+║   🐝  BEE AI PRO  —  Starting on Render             ║
+╚══════════════════════════════════════════════════════╝""")
 
-# Gunicorn needs the raw Flask app, but socketio patches it internally.
-# With gevent worker + flask-socketio, expose `application = app`
+from app import app, socketio, get_model
+
+# Pre-load model at startup so first /infer request doesn't time out
+try:
+    get_model()
+    print("✅ Model pre-loaded at startup")
+except Exception as e:
+    print(f"⚠️  Model pre-load failed: {e}")
+
 application = app
-
-print("✅ WSGI ready")
