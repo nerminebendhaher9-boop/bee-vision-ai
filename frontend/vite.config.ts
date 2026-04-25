@@ -8,11 +8,11 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 8080,
     proxy: {
-      "/infer": "http://localhost:7000",
-      "/stats": "http://localhost:7000",
-      "/alerts": "http://localhost:7000",
-      "/health": "http://localhost:7000",
-      "/test": "http://localhost:7000",
+      "/infer": "http://localhost:10000",
+      "/stats": "http://localhost:10000",
+      "/alerts": "http://localhost:10000",
+      "/health": "http://localhost:10000",
+      "/test": "http://localhost:10000",
     },
     hmr: {
       overlay: false,

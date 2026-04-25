@@ -18,6 +18,25 @@ export default function QueenStream() {
   const [detections, setDetections] = useState(0);
   const [confidence, setConfidence] = useState(0);
   const [lastMsg, setLastMsg] = useState("");
+  const [backendReady, setBackendReady] = useState(false);
+
+  // Ping backend health on mount to verify connectivity
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/health`)
+      .then((res) => {
+        if (res.ok) {
+          setBackendReady(true);
+          setLastMsg("");
+        } else {
+          setBackendReady(false);
+          setLastMsg("Backend health check failed. Server may be starting up...");
+        }
+      })
+      .catch(() => {
+        setBackendReady(false);
+        setLastMsg("Backend unreachable — check the deployed URL or server status.");
+      });
+  }, []);
 
   const getCameraStream = async (): Promise<MediaStream> => {
     // Try 1: ideal mobile setup (rear camera + HD)
