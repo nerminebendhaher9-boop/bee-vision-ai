@@ -1,32 +1,29 @@
 services:
-  # Backend Web Service
   - type: web
     name: bee-vision-ai-b
     runtime: python
     plan: free
     region: oregon
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: ggunicorn --worker-class gevent --workers 1 --timeout 300 --graceful-timeout 30 --bind 0.0.0.0:$PORT wsgi:application
-
+    buildCommand:   pip install -r requirements.txt
+    startCommand: gunicorn --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker --workers 1 --timeout 300 --graceful-timeout 30 --bind 0.0.0.0:$PORT wsgi:application
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
       - key: RENDER
         value: "true"
+      - key: FRONTEND_URL
+        value: https://bee-vision-ai.onrender.com
     disk:
       name: alerts
       mountPath: /opt/render/project/src/backend/alerts
       sizeGB: 1
 
-  # Frontend Static Site
   - type: static
     name: bee-vision-ai
-    runtime: static
     plan: free
     buildCommand: cd frontend && npm install && npm run build
     staticPublishPath: ./frontend/dist
     envVars:
       - key: VITE_BACKEND_URL
         value: https://bee-vision-ai-b.onrender.com
-        

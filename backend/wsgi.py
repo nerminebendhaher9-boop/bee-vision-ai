@@ -19,13 +19,10 @@ print("""
 ║   🐝  BEE AI PRO  —  Starting on Render             ║
 ╚══════════════════════════════════════════════════════╝""")
 
-from app import app, socketio, get_model
+from app import app, socketio
 
-# Pre-load model at startup so first /infer request doesn't time out
-try:
-    get_model()
-    print("✅ Model pre-loaded at startup")
-except Exception as e:
-    print(f"⚠️  Model pre-load failed: {e}")
+# Model is lazy-loaded on first /infer request to avoid OOM/boot timeout
+# on Render free tier (512MB RAM). Pre-loading at import time often kills
+# the worker before gunicorn finishes booting.
 
 application = app
