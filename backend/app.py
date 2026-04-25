@@ -1,8 +1,9 @@
 """
-BEE AI PRO - Complete Backend for Render
-Fixed duplicate CORS header issue
+BEE AI PRO - Backend for Render
+- Fixed: CORS no duplicate headers
+- Fixed: Tracker not started on Render (no camera), only loaded on /infer
+- Fixed: socketio exported for wsgi
 """
-
 from __future__ import annotations
 
 import sys
@@ -41,18 +42,17 @@ app.config["SECRET_KEY"] = "bee-ai-pro-secret"
 app.config['JSON_SORT_KEYS'] = False
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
-# FIX 1: Get frontend URL from env, but don't hardcode the same value twice
+# Single source of truth — flask-cors handles everything including OPTIONS
+# Do NOT add @after_request that also sets these headers (causes duplicates)
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://bee-vision-ai.onrender.com')
 
-ALLOWED_ORIGINS = list(dict.fromkeys([          # dict.fromkeys deduplicates
+ALLOWED_ORIGINS = list(dict.fromkeys([
     FRONTEND_URL,
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:8080",
 ]))
 
-# FIX 2: Let flask-cors handle everything — do NOT add a manual @after_request
-# that also sets Access-Control-Allow-Origin (that caused the duplicate header).
 CORS(app,
      resources={r"/*": {"origins": ALLOWED_ORIGINS}},
      supports_credentials=True,
@@ -69,7 +69,6 @@ socketio = SocketIO(
     ping_timeout=60,
     ping_interval=25,
     max_http_buffer_size=5 * 1024 * 1024,
-    http_compression=True
 )
 
 # ── Config ─────────────────────────────────────────────────────────────────────
@@ -81,30 +80,35 @@ def load_config():
         return yaml.safe_load(f)
 
 cfg = load_config()
+log.info("Config loaded")
 
-# ── Tracker ────────────────────────────────────────────────────────────────────
-tracker = None
-tracker_lock = threading.Lock()
+# ── Model (lazy, no camera loop on Render) ────────────────────────────────────
+# On Render there is no webcam. We load the YOLO model once on first /infer
+# call and run inference directly — no BeeTracker camera thread needed.
 
-def get_tracker():
-    global tracker
-    if tracker is None:
-        with tracker_lock:
-            if tracker is None:
+_model = None
+_model_lock = threading.Lock()
+
+def get_model():
+    global _model
+    if _model is None:
+        with _model_lock:
+            if _model is None:
                 try:
-                    from detector.tracker import BeeTracker
-                    tracker = BeeTracker(cfg)
-                    tracker.start()
-                    log.info("✅ BeeTracker loaded")
+                    from ultralytics import YOLO
+                    from pathlib import Path as P
+                    w = P(cfg["model"]["weights"])
+                    if not w.is_absolute():
+                        w = ROOT / w
+                    log.info("Loading YOLO model from %s ...", w)
+                    _model = YOLO(str(w), task='detect')
+                    log.info("✅ Model loaded")
                 except Exception as e:
-                    log.error(f"Failed to start tracker: {e}")
-    return tracker
+                    log.error("Failed to load model: %s", e)
+                    raise
+    return _model
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
-
-# FIX 3: Remove the separate OPTIONS route handler — flask-cors handles
-# preflight automatically when you use CORS(app, ...). A manual OPTIONS
-# handler that also sets the header is a second source of duplication.
 
 @app.route('/', methods=['GET'])
 def index():
@@ -118,10 +122,10 @@ def index():
 
 @app.route('/health', methods=['GET'])
 def health():
-    t = get_tracker()
+    model_ready = _model is not None
     return jsonify({
-        "status": "ok" if t else "degraded",
-        "tracker_ready": t is not None,
+        "status": "ok",
+        "model_loaded": model_ready,
         "timestamp": datetime.now().isoformat()
     })
 
@@ -132,27 +136,28 @@ def test():
         'message': 'CORS is working!',
         'cors_enabled': True,
         'allowed_origins': ALLOWED_ORIGINS,
-        'tracker_loaded': tracker is not None
+        'model_loaded': _model is not None,
     })
 
 @app.route('/stats', methods=['GET'])
 def stats():
-    try:
-        t = get_tracker()
-        if t and hasattr(t, 'stats'):
-            return jsonify(t.stats)
-        return jsonify({'error': 'Tracker not ready', 'queens': 0}), 503
-    except Exception as e:
-        log.error(f"Stats error: {e}")
-        return jsonify({'error': str(e)}), 500
+    return jsonify({
+        'queens': 0,
+        'model_loaded': _model is not None,
+        'running': False,
+        'note': 'Camera-less mode: submit frames via /infer'
+    })
 
 @app.route('/alerts', methods=['GET'])
 def list_alerts():
     try:
         alerts_dir = ROOT / cfg["alerts"]["save_dir"]
         if alerts_dir.exists():
-            alerts = sorted(alerts_dir.glob("*.jpg"),
-                            key=lambda p: p.stat().st_mtime, reverse=True)
+            alerts = sorted(
+                alerts_dir.glob("*.jpg"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
             return jsonify([p.name for p in alerts[:50]])
         return jsonify([])
     except Exception as e:
@@ -170,31 +175,39 @@ def infer():
     try:
         data = request.get_json()
         if not data:
-            return jsonify({'error': 'No JSON data provided'}), 400
+            return jsonify({'error': 'No JSON data'}), 400
 
         img_data = data.get('img') or data.get('frame')
         if not img_data:
-            return jsonify({'error': 'No image data provided'}), 400
+            return jsonify({'error': 'No image data'}), 400
 
-        if ',' in img_data and img_data.startswith('data:image'):
-            img_data = img_data.split(',')[1]
+        # Strip data URL prefix
+        if isinstance(img_data, str) and ',' in img_data:
+            img_data = img_data.split(',', 1)[1]
 
-        missing_padding = len(img_data) % 4
-        if missing_padding:
-            img_data += '=' * (4 - missing_padding)
+        # Fix base64 padding
+        missing = len(img_data) % 4
+        if missing:
+            img_data += '=' * (4 - missing)
 
+        # Decode image
         try:
             decoded = base64.b64decode(img_data)
             nparr = np.frombuffer(decoded, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if frame is None:
+                raise ValueError("cv2.imdecode returned None")
         except Exception as e:
-            return jsonify({'error': f'Failed to decode image: {str(e)}'}), 400
+            return jsonify({'error': f'Image decode failed: {e}'}), 400
 
-        t = get_tracker()
-        if t is None:
-            return jsonify({'error': 'Tracker not available'}), 503
+        # Load model (lazy)
+        try:
+            model = get_model()
+        except Exception as e:
+            return jsonify({'error': f'Model not available: {e}'}), 503
 
-        res = t.model.predict(
+        # Run inference
+        res = model.predict(
             frame,
             conf=cfg["model"].get("confidence", 0.75),
             iou=cfg["model"].get("iou", 0.50),
@@ -202,7 +215,7 @@ def infer():
             device="cpu",
             half=False,
             verbose=False,
-            classes=[0]
+            classes=[0],
         )[0]
 
         detections = []
@@ -212,7 +225,7 @@ def infer():
                 conf = float(box.conf[0].cpu().numpy())
                 detections.append({
                     'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                    'confidence': conf,
+                    'confidence': round(conf, 3),
                     'class': 'queen'
                 })
 
@@ -225,25 +238,25 @@ def infer():
         })
 
     except Exception as e:
-        log.error(f"Inference error: {e}")
+        log.error("Inference error: %s", e, exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 # ── SocketIO events ────────────────────────────────────────────────────────────
 
 @socketio.on('connect')
 def handle_connect():
-    log.info(f"Client connected: {request.sid}")
+    log.info("Client connected: %s", request.sid)
     emit('status', {'connected': True, 'message': 'Bee AI Pro ready!'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    log.info(f"Client disconnected: {request.sid}")
+    log.info("Client disconnected: %s", request.sid)
 
-# ── Entrypoint ─────────────────────────────────────────────────────────────────
+# ── Dev entrypoint ─────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    log.info(f"🚀 Starting on port {port}")
+    log.info("Starting dev server on port %d", port)
     socketio.run(app, host='0.0.0.0', port=port, debug=False)
 else:
-    log.info("App loaded by gunicorn")
+    log.info("Loaded by gunicorn")
