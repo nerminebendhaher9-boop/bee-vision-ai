@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# THIS MUST BE AT THE VERY TOP - Gevent monkey patching
+# ✅ MUST be first
 from gevent import monkey
 monkey.patch_all()
 
@@ -11,16 +11,15 @@ import os
 import time
 import base64
 import threading
-import urllib.request
 from datetime import datetime
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
+# ✅ Environment optimizations
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"
 os.environ["YOLO_VERBOSE"] = "False"
 
 logging.basicConfig(
@@ -30,317 +29,209 @@ logging.basicConfig(
 )
 log = logging.getLogger("bee.app")
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 import yaml
 import cv2
 import numpy as np
 
+# ─────────────────────────────────────────────
+# FLASK INIT
+# ─────────────────────────────────────────────
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "bee-ai-pro-secret"
 app.config["JSON_SORT_KEYS"] = False
 
-# CORS Configuration
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://bee-vision-ai.onrender.com")
-RENDER_EXTERNAL_HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-if RENDER_EXTERNAL_HOSTNAME:
-    BACKEND_URL = f"https://{RENDER_EXTERNAL_HOSTNAME}"
-else:
-    BACKEND_URL = os.environ.get("BACKEND_URL", f"http://localhost:{os.environ.get('PORT', 5000)}")
 
 ALLOWED_ORIGINS = list(dict.fromkeys([
     FRONTEND_URL,
-    BACKEND_URL,
     "https://bee-vision-ai.onrender.com",
     "https://bee-vision-ai-b.onrender.com",
     "http://localhost:5173",
     "http://localhost:3000",
-    "http://localhost:8080",
-    "http://localhost:5000",
 ]))
 
-log.info(f"CORS allowed origins: {ALLOWED_ORIGINS}")
-
-# Configure CORS - THIS IS ENOUGH, don't add manual headers
-CORS(app,
-     resources={r"/*": {"origins": ALLOWED_ORIGINS}},
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-
-# REMOVED the @app.after_request that was adding duplicate headers
+CORS(
+    app,
+    origins=ALLOWED_ORIGINS,
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+)
 
 socketio = SocketIO(
     app,
     cors_allowed_origins=ALLOWED_ORIGINS,
     async_mode="gevent",
-    logger=False,
-    engineio_logger=False,
     ping_timeout=60,
     ping_interval=25,
-    max_http_buffer_size=5 * 1024 * 1024,
 )
 
+# ─────────────────────────────────────────────
+# LOAD CONFIG
+# ─────────────────────────────────────────────
 def load_config():
     cfg_path = ROOT / "config.yaml"
     if not cfg_path.exists():
         raise FileNotFoundError(f"config.yaml missing: {cfg_path}")
-    with open(cfg_path, encoding='utf-8') as f:
+    with open(cfg_path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 cfg = load_config()
-log.info("Config loaded")
+log.info("✅ Config loaded")
 
-# ── Model ──────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# MODEL (SAFE LOADING)
+# ─────────────────────────────────────────────
 _model = None
-_model_lock = threading.Lock()
 _model_error = None
 
-def _load_model_background():
+
+def load_model():
     global _model, _model_error
     try:
         from ultralytics import YOLO
+
         w = Path(cfg["model"]["weights"])
         if not w.is_absolute():
             w = ROOT / w
+
         if not w.exists():
             raise FileNotFoundError(f"Weights not found: {w}")
+
         size_mb = round(w.stat().st_size / 1024 / 1024, 1)
-        log.info("🔄 Loading YOLO model from %s (%.1f MB)...", w, size_mb)
-        model = YOLO(str(w), task='detect')
-        with _model_lock:
-            _model = model
-        log.info("✅ Model loaded successfully")
+        log.info(f"🔄 Loading model ({size_mb} MB)...")
+
+        _model = YOLO(str(w), task="detect")
+
+        log.info("✅ Model loaded")
+
     except Exception as e:
         _model_error = str(e)
-        log.error("❌ Model load failed: %s", e)
+        log.error("❌ Model failed: %s", e, exc_info=True)
 
-# Start model loading in background
-threading.Thread(target=_load_model_background, daemon=True, name="model-loader").start()
-log.info("⏳ Model loading thread started")
 
-# ── Keep alive ─────────────────────────────────────────────────────────────────
-def _keep_alive():
-    while True:
-        time.sleep(60)
-        try:
-            port = os.environ.get("PORT", 10000)
-            urllib.request.urlopen(f"http://localhost:{port}/health", timeout=5)
-        except Exception:
-            pass
+# ✅ Load model in background (non-blocking)
+threading.Thread(target=load_model, daemon=True).start()
 
-threading.Thread(target=_keep_alive, daemon=True, name="keep-alive").start()
-
-# ── Routes ─────────────────────────────────────────────────────────────────────
-
-@app.route('/', methods=['GET', 'OPTIONS'])
+# ─────────────────────────────────────────────
+# ROUTES
+# ─────────────────────────────────────────────
+@app.route("/")
 def index():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'})
     return jsonify({
-        "name": "Bee AI Pro Backend",
-        "status": "running on Render",
-        "backend_url": BACKEND_URL,
-        "frontend_url": FRONTEND_URL,
+        "status": "running",
         "model_loaded": _model is not None,
-        "allowed_origins": ALLOWED_ORIGINS,
+        "error": _model_error
     })
 
-@app.route('/health', methods=['GET', 'OPTIONS'])
+
+@app.route("/health")
 def health():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'})
     return jsonify({
         "status": "ok",
-        "backend_url": BACKEND_URL,
-        "frontend_url": FRONTEND_URL,
         "model_loaded": _model is not None,
-        "model_error": _model_error,
         "timestamp": datetime.now().isoformat()
     })
 
-@app.route('/config', methods=['GET', 'OPTIONS'])
-def get_config():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'})
-    return jsonify({
-        "backend_url": BACKEND_URL,
-        "frontend_url": FRONTEND_URL,
-        "model_loaded": _model is not None,
-        "model_error": _model_error,
-        "socketio_path": "/socket.io",
-        "api_version": "1.0.0",
-    })
 
-@app.route('/debug', methods=['GET', 'OPTIONS'])
-def debug():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'})
-    w = ROOT / cfg["model"]["weights"]
-    exists = w.exists()
-    return jsonify({
-        "weights_path": str(w),
-        "file_exists": exists,
-        "file_size_mb": round(w.stat().st_size / 1024 / 1024, 1) if exists else None,
-        "model_loaded": _model is not None,
-        "model_error": _model_error,
-        "root": str(ROOT),
-    })
-
-@app.route('/test', methods=['GET', 'OPTIONS'])
-def test():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'})
-    return jsonify({
-        'status': 'ok',
-        'cors_enabled': True,
-        'model_loaded': _model is not None,
-    })
-
-@app.route('/stats', methods=['GET', 'OPTIONS'])
-def stats():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'})
-    return jsonify({
-        'queens': 0,
-        'model_loaded': _model is not None,
-        'running': False,
-    })
-
-@app.route('/alerts', methods=['GET', 'OPTIONS'])
-def list_alerts():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'})
-    try:
-        alerts_dir = ROOT / cfg["alerts"]["save_dir"]
-        if alerts_dir.exists():
-            alerts = sorted(
-                alerts_dir.glob("*.jpg"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True
-            )
-            return jsonify([p.name for p in alerts[:50]])
-        return jsonify([])
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/alerts/<filename>', methods=['GET', 'OPTIONS'])
-def get_alert(filename):
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'})
-    try:
-        return send_from_directory(ROOT / cfg["alerts"]["save_dir"], filename)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 404
-
-@app.route('/infer', methods=['POST', 'OPTIONS'])
+@app.route("/infer", methods=["POST"])
 def infer():
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        return response
-    
     try:
-        waited = 0
-        while _model is None and _model_error is None and waited < 180:
-            time.sleep(1)
-            waited += 1
-
         if _model_error:
-            return jsonify({'error': f'Model failed: {_model_error}'}), 503
+            return jsonify({"error": _model_error}), 503
+
         if _model is None:
-            return jsonify({'error': 'Model timeout'}), 503
+            return jsonify({"error": "Model loading"}), 503
 
         data = request.get_json()
         if not data:
-            return jsonify({'error': 'No JSON data'}), 400
+            return jsonify({"error": "No JSON"}), 400
 
-        img_data = data.get('img') or data.get('frame')
+        img_data = data.get("img") or data.get("frame")
         if not img_data:
-            return jsonify({'error': 'No image data'}), 400
+            return jsonify({"error": "No image"}), 400
 
-        if isinstance(img_data, str) and ',' in img_data:
-            img_data = img_data.split(',', 1)[1]
+        # Base64 clean
+        if "," in img_data:
+            img_data = img_data.split(",", 1)[1]
 
-        missing = len(img_data) % 4
-        if missing:
-            img_data += '=' * (4 - missing)
+        # Fix padding
+        img_data += "=" * (-len(img_data) % 4)
 
-        try:
-            decoded = base64.b64decode(img_data)
-            nparr = np.frombuffer(decoded, np.uint8)
-            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if frame is None:
-                raise ValueError("cv2.imdecode returned None")
-        except Exception as e:
-            return jsonify({'error': f'Image decode failed: {e}'}), 400
+        decoded = base64.b64decode(img_data)
+        np_arr = np.frombuffer(decoded, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
+        if frame is None:
+            return jsonify({"error": "Invalid image"}), 400
+
+        # Inference
         m = cfg["model"]
-        v = cfg.get("visualization", {})
-        a = cfg.get("alerts", {})
 
-        res = _model.predict(
+        results = _model.predict(
             frame,
-            conf=m.get("confidence", 0.75),
-            iou=m.get("iou", 0.50),
+            conf=m.get("confidence", 0.7),
+            iou=m.get("iou", 0.5),
             imgsz=m.get("imgsz", 320),
-            device=m.get("device", "cpu"),
-            half=m.get("half", False),
+            device="cpu",
             verbose=False,
-            classes=[0],
+            classes=None  # ✅ FIXED
         )[0]
 
         detections = []
-        queen_color = tuple(v.get("queen_color", [0, 180, 255]))
-        bbox_thickness = v.get("bbox_thickness", 2)
-        font_scale = v.get("font_scale", 0.6)
-        show_confidence = v.get("show_confidence", True)
 
-        if res.boxes and len(res.boxes) > 0:
-            for box in res.boxes:
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                conf = float(box.conf[0].cpu().numpy())
+        if results.boxes:
+            for box in results.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                conf = float(box.conf[0])
+
                 detections.append({
-                    'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                    'confidence': round(conf, 3),
-                    'class': 'queen'
+                    "bbox": [x1, y1, x2, y2],
+                    "confidence": round(conf, 3),
+                    "class": "queen"
                 })
-                cv2.rectangle(frame, (x1, y1), (x2, y2), queen_color, bbox_thickness)
-                label_parts = ["queen"]
-                if show_confidence:
-                    label_parts.append(f"{conf:.0%}")
-                label = " ".join(label_parts)
-                cv2.putText(frame, label, (x1, max(y1 - 8, 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, queen_color, 2)
 
-        jpeg_quality = a.get("jpeg_quality", 80)
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
-        img_b64 = base64.b64encode(buf).decode('utf-8')
+                # Draw
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 180, 255), 2)
+                cv2.putText(frame, f"{conf:.0%}", (x1, y1 - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 180, 255), 2)
+
+        _, buffer = cv2.imencode(".jpg", frame)
+        img_out = base64.b64encode(buffer).decode("utf-8")
 
         return jsonify({
-            'img': img_b64,
-            'meta': {
-                'queens': len(detections),
-                'detections': detections,
-                'timestamp': time.time()
+            "img": img_out,
+            "meta": {
+                "count": len(detections),
+                "detections": detections,
+                "time": time.time()
             }
         })
 
     except Exception as e:
-        log.error("Inference error: %s", e, exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        log.error("❌ Inference error: %s", e, exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
-@socketio.on('connect')
-def handle_connect():
-    log.info("Client connected: %s", request.sid)
-    emit('status', {'connected': True, 'message': 'Bee AI Pro ready!'})
 
-@socketio.on('disconnect')
-def handle_disconnect():
-    log.info("Client disconnected: %s", request.sid)
+# ─────────────────────────────────────────────
+# SOCKETIO
+# ─────────────────────────────────────────────
+@socketio.on("connect")
+def on_connect():
+    emit("status", {"connected": True})
 
-log.info("Loaded by gunicorn")
 
+@socketio.on("disconnect")
+def on_disconnect():
+    pass
+
+
+# ─────────────────────────────────────────────
+# RUN (LOCAL ONLY)
+# ─────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port)
