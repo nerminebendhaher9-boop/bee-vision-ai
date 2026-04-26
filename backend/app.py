@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# THIS MUST BE AT THE VERY TOP - Gevent monkey patching
+from gevent import monkey
+monkey.patch_all()
+
 import sys
 import logging
 from pathlib import Path
@@ -38,11 +42,21 @@ app.config["SECRET_KEY"] = "bee-ai-pro-secret"
 app.config["JSON_SORT_KEYS"] = False
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://bee-vision-ai.onrender.com")
+RENDER_EXTERNAL_HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+if RENDER_EXTERNAL_HOSTNAME:
+    BACKEND_URL = f"https://{RENDER_EXTERNAL_HOSTNAME}"
+else:
+    BACKEND_URL = os.environ.get("BACKEND_URL", f"http://localhost:{os.environ.get('PORT', 5000)}")
+
 ALLOWED_ORIGINS = list(dict.fromkeys([
     FRONTEND_URL,
+    BACKEND_URL,
+    "https://bee-vision-ai.onrender.com",
+    "https://bee-vision-ai-b.onrender.com",
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:8080",
+    "http://localhost:5000",
 ]))
 
 CORS(app,
@@ -50,6 +64,17 @@ CORS(app,
      supports_credentials=True,
      allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+
+@app.after_request
+def after_request(response):
+    origin = request.headers.get('Origin')
+    if origin in ALLOWED_ORIGINS:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    response.headers.add('X-Backend-Url', BACKEND_URL)
+    return response
 
 socketio = SocketIO(
     app,
@@ -96,7 +121,8 @@ def _load_model_background():
         _model_error = str(e)
         log.error("❌ Model load failed: %s", e)
 
-# Le chargement du modèle est maintenant déclenché par wsgi.py
+# ✅ FIXED: Start model loading in background
+threading.Thread(target=_load_model_background, daemon=True, name="model-loader").start()
 
 # ── Keep alive ─────────────────────────────────────────────────────────────────
 def _keep_alive():
@@ -112,26 +138,49 @@ threading.Thread(target=_keep_alive, daemon=True, name="keep-alive").start()
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
-@app.route('/', methods=['GET'])
+@app.route('/', methods=['GET', 'OPTIONS'])
 def index():
+    if request.method == 'OPTIONS':
+        return _handle_options()
     return jsonify({
         "name": "Bee AI Pro Backend",
         "status": "running on Render",
+        "backend_url": BACKEND_URL,
+        "frontend_url": FRONTEND_URL,
         "model_loaded": _model is not None,
         "allowed_origins": ALLOWED_ORIGINS,
     })
 
-@app.route('/health', methods=['GET'])
+@app.route('/health', methods=['GET', 'OPTIONS'])
 def health():
+    if request.method == 'OPTIONS':
+        return _handle_options()
     return jsonify({
         "status": "ok",
+        "backend_url": BACKEND_URL,
+        "frontend_url": FRONTEND_URL,
         "model_loaded": _model is not None,
         "model_error": _model_error,
         "timestamp": datetime.now().isoformat()
     })
 
-@app.route('/debug', methods=['GET'])
+@app.route('/config', methods=['GET', 'OPTIONS'])
+def get_config():
+    if request.method == 'OPTIONS':
+        return _handle_options()
+    return jsonify({
+        "backend_url": BACKEND_URL,
+        "frontend_url": FRONTEND_URL,
+        "model_loaded": _model is not None,
+        "model_error": _model_error,
+        "socketio_path": "/socket.io",
+        "api_version": "1.0.0",
+    })
+
+@app.route('/debug', methods=['GET', 'OPTIONS'])
 def debug():
+    if request.method == 'OPTIONS':
+        return _handle_options()
     w = ROOT / cfg["model"]["weights"]
     exists = w.exists()
     return jsonify({
@@ -143,24 +192,30 @@ def debug():
         "root": str(ROOT),
     })
 
-@app.route('/test', methods=['GET'])
+@app.route('/test', methods=['GET', 'OPTIONS'])
 def test():
+    if request.method == 'OPTIONS':
+        return _handle_options()
     return jsonify({
         'status': 'ok',
         'cors_enabled': True,
         'model_loaded': _model is not None,
     })
 
-@app.route('/stats', methods=['GET'])
+@app.route('/stats', methods=['GET', 'OPTIONS'])
 def stats():
+    if request.method == 'OPTIONS':
+        return _handle_options()
     return jsonify({
         'queens': 0,
         'model_loaded': _model is not None,
         'running': False,
     })
 
-@app.route('/alerts', methods=['GET'])
+@app.route('/alerts', methods=['GET', 'OPTIONS'])
 def list_alerts():
+    if request.method == 'OPTIONS':
+        return _handle_options()
     try:
         alerts_dir = ROOT / cfg["alerts"]["save_dir"]
         if alerts_dir.exists():
@@ -174,15 +229,20 @@ def list_alerts():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/alerts/<filename>', methods=['GET'])
+@app.route('/alerts/<filename>', methods=['GET', 'OPTIONS'])
 def get_alert(filename):
+    if request.method == 'OPTIONS':
+        return _handle_options()
     try:
         return send_from_directory(ROOT / cfg["alerts"]["save_dir"], filename)
     except Exception as e:
         return jsonify({'error': str(e)}), 404
 
-@app.route('/infer', methods=['POST'])
+@app.route('/infer', methods=['POST', 'OPTIONS'])
 def infer():
+    if request.method == 'OPTIONS':
+        return _handle_options()
+    
     try:
         waited = 0
         while _model is None and _model_error is None and waited < 180:
@@ -273,6 +333,17 @@ def infer():
         log.error("Inference error: %s", e, exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+def _handle_options():
+    """Handle CORS preflight requests"""
+    response = jsonify({'status': 'ok'})
+    origin = request.headers.get('Origin')
+    if origin in ALLOWED_ORIGINS:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
+    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
+
 @socketio.on('connect')
 def handle_connect():
     log.info("Client connected: %s", request.sid)
@@ -287,4 +358,3 @@ log.info("Loaded by gunicorn")
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port)
-

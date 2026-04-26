@@ -5,20 +5,18 @@ import sys
 import os
 from pathlib import Path
 
-# Ajoutez le répertoire parent au PYTHONPATH pour que app.py soit trouvable
+# Add backend directory to PYTHONPATH
 backend_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(backend_dir))
 
-# Importez l'application Flask et SocketIO après le monkey patching
-from app import app, socketio, _load_model_background, log
+# Import the Flask app and SocketIO after monkey patching
+from app import app, socketio, log
 
-# Chargez le modèle de manière synchrone avant que Gunicorn ne commence à servir
-log.info("⏳ Loading YOLO model at startup (from wsgi.py)...")
-try:
-    _load_model_background()
-    log.info("✅ Model ready (from wsgi.py)")
-except Exception as e:
-    log.error(f"❌ Model load failed (from wsgi.py): {e}")
+# The model is already being loaded in app.py via background thread
+log.info("✅ Starting Gunicorn server - model will load in background")
 
-# L'application pour Gunicorn
+# Application for Gunicorn
 application = app
+
+if __name__ == "__main__":
+    socketio.run(app, host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
