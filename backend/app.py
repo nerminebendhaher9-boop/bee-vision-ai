@@ -62,22 +62,14 @@ ALLOWED_ORIGINS = list(dict.fromkeys([
 
 log.info(f"CORS allowed origins: {ALLOWED_ORIGINS}")
 
+# Configure CORS - THIS IS ENOUGH, don't add manual headers
 CORS(app,
      resources={r"/*": {"origins": ALLOWED_ORIGINS}},
      supports_credentials=True,
      allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
-@app.after_request
-def after_request(response):
-    origin = request.headers.get('Origin')
-    if origin in ALLOWED_ORIGINS:
-        response.headers.add('Access-Control-Allow-Origin', origin)
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
-        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-    response.headers.add('X-Backend-Url', BACKEND_URL)
-    return response
+# REMOVED the @app.after_request that was adding duplicate headers
 
 socketio = SocketIO(
     app,
@@ -124,7 +116,7 @@ def _load_model_background():
         _model_error = str(e)
         log.error("❌ Model load failed: %s", e)
 
-# ✅ CRITICAL FIX: Start model loading in background
+# Start model loading in background
 threading.Thread(target=_load_model_background, daemon=True, name="model-loader").start()
 log.info("⏳ Model loading thread started")
 
@@ -145,7 +137,7 @@ threading.Thread(target=_keep_alive, daemon=True, name="keep-alive").start()
 @app.route('/', methods=['GET', 'OPTIONS'])
 def index():
     if request.method == 'OPTIONS':
-        return _handle_options()
+        return jsonify({'status': 'ok'})
     return jsonify({
         "name": "Bee AI Pro Backend",
         "status": "running on Render",
@@ -158,7 +150,7 @@ def index():
 @app.route('/health', methods=['GET', 'OPTIONS'])
 def health():
     if request.method == 'OPTIONS':
-        return _handle_options()
+        return jsonify({'status': 'ok'})
     return jsonify({
         "status": "ok",
         "backend_url": BACKEND_URL,
@@ -171,7 +163,7 @@ def health():
 @app.route('/config', methods=['GET', 'OPTIONS'])
 def get_config():
     if request.method == 'OPTIONS':
-        return _handle_options()
+        return jsonify({'status': 'ok'})
     return jsonify({
         "backend_url": BACKEND_URL,
         "frontend_url": FRONTEND_URL,
@@ -184,7 +176,7 @@ def get_config():
 @app.route('/debug', methods=['GET', 'OPTIONS'])
 def debug():
     if request.method == 'OPTIONS':
-        return _handle_options()
+        return jsonify({'status': 'ok'})
     w = ROOT / cfg["model"]["weights"]
     exists = w.exists()
     return jsonify({
@@ -199,7 +191,7 @@ def debug():
 @app.route('/test', methods=['GET', 'OPTIONS'])
 def test():
     if request.method == 'OPTIONS':
-        return _handle_options()
+        return jsonify({'status': 'ok'})
     return jsonify({
         'status': 'ok',
         'cors_enabled': True,
@@ -209,7 +201,7 @@ def test():
 @app.route('/stats', methods=['GET', 'OPTIONS'])
 def stats():
     if request.method == 'OPTIONS':
-        return _handle_options()
+        return jsonify({'status': 'ok'})
     return jsonify({
         'queens': 0,
         'model_loaded': _model is not None,
@@ -219,7 +211,7 @@ def stats():
 @app.route('/alerts', methods=['GET', 'OPTIONS'])
 def list_alerts():
     if request.method == 'OPTIONS':
-        return _handle_options()
+        return jsonify({'status': 'ok'})
     try:
         alerts_dir = ROOT / cfg["alerts"]["save_dir"]
         if alerts_dir.exists():
@@ -236,7 +228,7 @@ def list_alerts():
 @app.route('/alerts/<filename>', methods=['GET', 'OPTIONS'])
 def get_alert(filename):
     if request.method == 'OPTIONS':
-        return _handle_options()
+        return jsonify({'status': 'ok'})
     try:
         return send_from_directory(ROOT / cfg["alerts"]["save_dir"], filename)
     except Exception as e:
@@ -245,7 +237,8 @@ def get_alert(filename):
 @app.route('/infer', methods=['POST', 'OPTIONS'])
 def infer():
     if request.method == 'OPTIONS':
-        return _handle_options()
+        response = jsonify({'status': 'ok'})
+        return response
     
     try:
         waited = 0
@@ -336,17 +329,6 @@ def infer():
     except Exception as e:
         log.error("Inference error: %s", e, exc_info=True)
         return jsonify({'error': str(e)}), 500
-
-def _handle_options():
-    """Handle CORS preflight requests"""
-    response = jsonify({'status': 'ok'})
-    origin = request.headers.get('Origin')
-    if origin in ALLOWED_ORIGINS:
-        response.headers.add('Access-Control-Allow-Origin', origin)
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
-    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
 
 @socketio.on('connect')
 def handle_connect():
