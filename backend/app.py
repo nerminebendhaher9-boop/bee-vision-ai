@@ -41,6 +41,7 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = "bee-ai-pro-secret"
 app.config["JSON_SORT_KEYS"] = False
 
+# CORS Configuration
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://bee-vision-ai.onrender.com")
 RENDER_EXTERNAL_HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
 if RENDER_EXTERNAL_HOSTNAME:
@@ -58,6 +59,8 @@ ALLOWED_ORIGINS = list(dict.fromkeys([
     "http://localhost:8080",
     "http://localhost:5000",
 ]))
+
+log.info(f"CORS allowed origins: {ALLOWED_ORIGINS}")
 
 CORS(app,
      resources={r"/*": {"origins": ALLOWED_ORIGINS}},
@@ -121,8 +124,9 @@ def _load_model_background():
         _model_error = str(e)
         log.error("❌ Model load failed: %s", e)
 
-# ✅ FIXED: Start model loading in background
+# ✅ CRITICAL FIX: Start model loading in background
 threading.Thread(target=_load_model_background, daemon=True, name="model-loader").start()
+log.info("⏳ Model loading thread started")
 
 # ── Keep alive ─────────────────────────────────────────────────────────────────
 def _keep_alive():
